@@ -1,7 +1,10 @@
 #include "cell.h"
 
+// (x,y) coordinate typedef 
 typedef std::pair< int, int > Coord;
 
+// lexical coordinate order functor
+// instrusive set is order by this functor
 struct KeyCmp
 {
    bool operator()( Coord& coord, Cell const& cell ) 
@@ -15,11 +18,14 @@ struct KeyCmp
    }
 };
 
+// order operator
 bool operator<( Cell const& lhs, Cell const& rhs )
 {
    return KeyComp()( Coord( lhs.x, lhs.y ), rhs );
 }
 
+// dispose functor for intrusive set
+// to be replaced by memory pool management
 struct Disposer
 {
    void operator()( Cell* cell ) { delete cell; }
@@ -35,17 +41,17 @@ Cell::Cell( int _x, int _y )
    nb[0] = nb[1] = nb[2] = nb[3] = nb[4] = nb[5] = nb[6] = nb[7] = 0;
 }
 
+// helper function for untangle
 template< char I >
 untangleHelp( Cell& cell )
 {
    Cell* const c = cell.nb[I];
-   c.nb[7-I] = 0; // unset reference
+   c->nb[7-I] = 0; // unset reference
 }
 
+// untangle cell from neighbours, set all neighbour pointer to 0
 void untangle( Cell& cell )
 {
-   // untangle cell from neighbours 
-  
    untangleHelp< 0 >( cell ); 
    untangleHelp< 1 >( cell ); 
    untangleHelp< 2 >( cell ); 
@@ -56,7 +62,7 @@ void untangle( Cell& cell )
    untangleHelp< 7 >( cell ); 
 }
 
-// occupied cells can die and empty cell can give birth 
+// conways life and death rule 
 void updateCell( Cell& cell )
 {
    cell.chg = 0;
@@ -76,18 +82,18 @@ void updateCell( Cell& cell )
    }
 }
 
-// update cells in list: 
-void updateCells( CellSet& cells )
+// proceed to next tick 
+void nextTick( CellSet& cells, unsigned short vdlen )
 {
    // update new occupied flag for all cells in list
    for (CellSet::iterator itr = cells.begin(), end = cells.end(); itr != end;
         ++itr)
       updateCell( *itr );  
 
-   // update neighbour count for all neighbours of all cells
-   // may prepend new cell to set 
+   // update neighbourhood for all cells
+   // may insert new cells and delete void cells 
    for (CellSet::iterator itr = cells.begin(); itr != cells.end(); ++itr)
-      updateNb( *itr, cells );  
+      updateNb( *itr, cells, vdlen );  
 
    // trim list
    for (CellSet::iterator itr = cells.begin(); itr != cells.end();)
