@@ -1,6 +1,8 @@
 #include "cell.h"
+
 #include <iostream>
 using std::cout; using std::endl;
+using std::ostream;
 
 void testCoord()
 {
@@ -50,9 +52,59 @@ void testCoord()
    }
 }
 
+template< int I >
+void dumpNb( Cell const& c )
+{
+   cout << I << " -> ";
+   Cell const* const nb = c.nb[I];
+   if (nb)
+      cout << "(" << getX( nb->coord ) << ", " << getY( nb->coord ) << ")\n";
+   else 
+      cout << "[]\n";
+}
+
+ostream& operator<<( ostream& s, Cell const& c )
+{
+   s
+      << "coord = (" << getX( c.coord ) << ", " << getY( c.coord ) << ")\n"
+      << "occ   = " << int( c.occ ) << '\n'
+      << "nbc   = " << c.nbc << '\n'
+      << "vdlen = " << c.vdlen << '\n';
+
+   dumpNb< 0 >( c );
+   dumpNb< 1 >( c );
+   dumpNb< 2 >( c );
+   dumpNb< 3 >( c );
+   dumpNb< 4 >( c );
+   dumpNb< 5 >( c );
+   dumpNb< 6 >( c );
+   dumpNb< 7 >( c );
+
+   return s;
+}
+
+ostream& operator<<( ostream& s, CellSet const& cells )
+{
+   for (CellSet::const_iterator itr = cells.begin(), end = cells.end(); 
+        itr != end; ++itr)
+      s << *itr << endl;
+
+   return s;
+}
+
+void testCellAdd()
+{
+   CellSet cells;
+   add( cells, -1, 1 );
+   add( cells, 0, 1 );
+
+   cout << cells << endl;
+}
+
 int main()
 {
    testCoord();
-   
+   testCellAdd();
+
    return 0;
 }

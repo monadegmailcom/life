@@ -82,5 +82,7 @@ typedef boost::intrusive::member_hook<
    Cell, boost::intrusive::set_member_hook<>, &Cell::hook > CellMemberOption;
 typedef boost::intrusive::set< Cell, CellMemberOption > CellSet;
 
+void add( CellSet& cells, int x, int y );
+
 #endif
 

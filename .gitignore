@@ -11,3 +11,11 @@
 *.lai
 *.la
 *.a
+
+# vc8 files
+Debug/*
+Release/*
+*.ncb
+*.sln
+*.suo
+*.user
