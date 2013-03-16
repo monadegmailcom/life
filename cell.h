@@ -22,17 +22,21 @@ typedef __int32 int32_t;
 // use intrusive container for customized memory management
 #include <boost/intrusive/set.hpp>
 
+// to order pairs (x,y) in lexical order address them as uint64_t
 union Coord
 {
    struct Pair
    {
+      uint32_t y; // declare y before x because of little endian
       uint32_t x;
-      uint32_t y;
    } p;
    uint64_t c;
 };
 
-Coord convertCoord( uint32_t x, uint32_t y );
+// signed coordinates are added with offset to avoid negativ values
+Coord toCoord( int32_t x, int32_t y );
+int32_t getX( Coord c );
+int32_t getY( Coord c );
 
 struct Cell 
 {

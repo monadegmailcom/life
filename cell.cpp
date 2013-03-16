@@ -1,16 +1,29 @@
 #include "cell.h"
 
-Coord convertCoord( const uint32_t x, const uint32_t y )
-{
-   const uint32_t offset = 0x0fffffff; 
-   // offset coordinate to mid of interval to avoid negativ values
-   uint64_t c = x+offset; // set lower 32 bit to offsetted x
-   c <<= 32; // shift bits up
-   c |= y+offset; // binary OR offsetted y with c
+// use local memory management to avoid heap allocations
+#include <boost/pool/object_pool.hpp>
 
-   Coord coord;
-   coord.c = c;
-   return coord;
+boost::object_pool< Cell > pool;
+
+// offset for coordinates to avoid negative values
+const uint32_t offset = 0x0fffffff; 
+
+Coord toCoord( const int32_t x, const int32_t y )
+{
+   Coord c;
+   c.p.x = x+offset;
+   c.p.y = y+offset;
+   return c;
+}
+
+int32_t getX( Coord c )
+{
+   return c.p.x-offset;
+}
+
+int32_t getY( Coord c )
+{
+   return c.p.y-offset;
 }
 
 // lexical coordinate order functor
@@ -28,10 +41,9 @@ bool operator<( Cell const& lhs, Cell const& rhs )
 }
 
 // dispose functor for intrusive set
-// to be replaced by memory pool management
 struct Disposer
 {
-   void operator()( Cell* cell ) { delete cell; }
+   void operator()( Cell* cell ) { pool.destroy( cell ); }
 };
 
 Cell::Cell( const Coord c )
@@ -98,7 +110,7 @@ Cell* getCell( const Coord c, CellSet& cells )
    CellSet::iterator itr = cells.lower_bound( c.c, KeyCmp());
    if (itr == cells.end() || itr->coord.c != c.c) // no cell found?
       // insert new empty cell 
-      itr = cells.insert( itr, *(new Cell( c ))); 
+      itr = cells.insert( itr, *(pool.construct( c )));
    return &*itr; 
 }
 
@@ -108,7 +120,9 @@ void updateNbHelp( Cell& cell, CellSet& cells )
    Cell* c = cell.nb[I];
    if (!c)
    {
-      const Coord coord = { cell.coord.p.x+X, cell.coord.p.y+Y };
+      Coord coord = cell.coord;
+      coord.p.x += X;
+      coord.p.y += Y;
       c = getCell( coord, cells );
       c->nb[7-I] = &cell;
       cell.nb[I] = c;
@@ -175,7 +189,7 @@ void nextTick( CellSet& cells, const uint16_t vdlen )
 // add cell to list (may be empty)
 void add( CellSet& cells, int x, int y )
 {
-   Cell* const cell = new Cell( convertCoord( x, y )); // create new cell
+   Cell* const cell = pool.construct( toCoord( x, y )); // create new cell
    cell->occ = 1; // occupied
    cell->chg = 1; // just born
 
