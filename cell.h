@@ -1,14 +1,43 @@
 #ifndef LIFE_H
 #define LIFE_H
 
-// set of cells, ordered by coordinates (x, y)
+// -> declare standard types
+#ifdef WIN32
+// for windows
+typedef unsigned __int8  uint8_t;
+typedef unsigned __int16 uint16_t;
+typedef unsigned __int32 uint32_t;
+typedef unsigned __int64 uint64_t;
+
+typedef __int32 int32_t;
+
+#else
+// for unix
+#include <stdint.h>
+
+#endif
+// <- declare standard types
+
+// set of cells, ordered by coordinates (x, y) packed in uint64_t
 // use intrusive container for customized memory management
 #include <boost/intrusive/set.hpp>
 
-struct Cell
+union Coord
+{
+   struct Pair
+   {
+      uint32_t x;
+      uint32_t y;
+   } p;
+   uint64_t c;
+};
+
+Coord convertCoord( uint32_t x, uint32_t y );
+
+struct Cell 
 {
    // default initilize, empty and no neighbours
-   Cell( int x, int y ); // x, y coordinate of cell
+   Cell( Coord c ); // coordinate of cell
 
    /* each cell can be in the state occupied or empty 
       state change occupied -> empty     : death
@@ -19,10 +48,11 @@ struct Cell
 
    // a cell is called void if its in state empty and has a neighbour count
    // of 0. void length is the number of ticks a cell is continously void
-   unsigned short vdlen;  
+   // algorithm removes cells with large vdlen
+   uint16_t vdlen;  
 
-   unsigned char occ; // occupied 
-   unsigned char nbc; // occupied neighbour count
+   char occ; // occupied 
+   uint8_t nbc; // occupied neighbour count
    
    /* 8 neigbour cells of a 2 dim cartesian grid
       0 1 2
@@ -37,8 +67,7 @@ struct Cell
    // member hook for intrusive set 
    boost::intrusive::set_member_hook<> hook;
 
-   const int x; // x coordinate 
-   const int y; // y coordinate
+   const Coord coord;
 };
 
 // lexical coordinate order 

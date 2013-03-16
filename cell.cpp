@@ -1,27 +1,30 @@
 #include "cell.h"
 
-// (x,y) coordinate typedef 
-typedef std::pair< int, int > Coord;
+Coord convertCoord( const uint32_t x, const uint32_t y )
+{
+   const uint32_t offset = 0x0fffffff; 
+   // offset coordinate to mid of interval to avoid negativ values
+   uint64_t c = x+offset; // set lower 32 bit to offsetted x
+   c <<= 32; // shift bits up
+   c |= y+offset; // binary OR offsetted y with c
+
+   Coord coord;
+   coord.c = c;
+   return coord;
+}
 
 // lexical coordinate order functor
 // instrusive set is order by this functor
 struct KeyCmp
 {
-   bool operator()( Coord& coord, Cell const& cell ) 
-   {
-      if (coord.first < rhs.x)
-         return true;
-      else if (coord.first == rhs.x && coord.second < rhs.y)
-         return true;
-      else
-         return false; 
-   }
+   bool operator()( Cell const& cell, uint64_t const& c ) const
+   { return cell.coord.c < c; }
 };
 
 // order operator
 bool operator<( Cell const& lhs, Cell const& rhs )
 {
-   return KeyComp()( Coord( lhs.x, lhs.y ), rhs );
+   return lhs.coord.c < rhs.coord.c;
 }
 
 // dispose functor for intrusive set
@@ -31,19 +34,19 @@ struct Disposer
    void operator()( Cell* cell ) { delete cell; }
 };
 
-Cell::Cell( int _x, int _y )
+Cell::Cell( const Coord c )
 : 
    occ( 0 ), // empty 
    nbc( 0 ), // no neighbours
    chg( 0 ), // no change
-   x( _x ), y( _y )
+   coord( c )
 {
    nb[0] = nb[1] = nb[2] = nb[3] = nb[4] = nb[5] = nb[6] = nb[7] = 0;
 }
 
 // helper function for untangle
 template< char I >
-untangleHelp( Cell& cell )
+void untangleHelp( Cell& cell )
 {
    Cell* const c = cell.nb[I];
    c->nb[7-I] = 0; // unset reference
@@ -71,66 +74,51 @@ void updateCell( Cell& cell )
       if (cell.nbc < 2 || cell.nbc > 3) // death?
       {
          cell.occ = 0;
-         chg = -1;
+         cell.chg = -1;
       }
    }
-   // else cell is empty
-   else if (cell.nbc == 3) // birth?
+   else // else cell is empty
    {
-      cell.occ = 1;
-      chg = 1;
+      if (cell.nbc == 0) // void?
+         ++cell.vdlen; // increment void length
+      else // not void
+      {
+         cell.vdlen = 0;
+         if (cell.nbc == 3) // birth?
+         {
+            cell.occ = 1;
+            cell.chg = 1;
+         }
+      }         
    }
 }
 
-// proceed to next tick 
-void nextTick( CellSet& cells, unsigned short vdlen )
+Cell* getCell( const Coord c, CellSet& cells )
 {
-   // update new occupied flag for all cells in list
-   for (CellSet::iterator itr = cells.begin(), end = cells.end(); itr != end;
-        ++itr)
-      updateCell( *itr );  
-
-   // update neighbourhood for all cells
-   // may insert new cells and delete void cells 
-   for (CellSet::iterator itr = cells.begin(); itr != cells.end(); ++itr)
-      updateNb( *itr, cells, vdlen );  
-
-   // trim list
-   for (CellSet::iterator itr = cells.begin(); itr != cells.end();)
-      if (!itr->occ && !itr->nbc) // empty cell with no neighbours?
-      {
-         untangle( *itr ); // untangle all references to me
-         itr = cells.erase_and_dispose( itr, Disposer()); 
-      }  
-      else
-         ++itr;
-}
- 
-Cell* getCell( const int x, const int y, CellSet& cells )
-{
-   CellSet::iterator itr = cells.find( Coord( x, y ), KeyComp());
-   if (itr == cells.end()) // no cell found?
+   CellSet::iterator itr = cells.lower_bound( c.c, KeyCmp());
+   if (itr == cells.end() || itr->coord.c != c.c) // no cell found?
       // insert new empty cell 
-      itr = cells.insert( cells.begin(), *(new Cell( x, y ))); 
+      itr = cells.insert( itr, *(new Cell( c ))); 
    return &*itr; 
 }
 
 template< char X, char Y, char I >
-void updateNbHelp( Cell& cell, CellMap& cells )
+void updateNbHelp( Cell& cell, CellSet& cells )
 {
    Cell* c = cell.nb[I];
    if (!c)
    {
-      c = getCell( cell.x+X, cell.y+Y, cells );
+      const Coord coord = { cell.coord.p.x+X, cell.coord.p.y+Y };
+      c = getCell( coord, cells );
       c->nb[7-I] = &cell;
-      cell.nb[I] = c; 
+      cell.nb[I] = c;
    }
    ++c->nbc;
 }
  
 /* update neighbour count of all 8 neighbours 
  * set new neigbour references for birth cells */
-void updateNb( Cell& cell, CellMap cells )
+void updateNb( Cell& cell, CellSet& cells )
 {
    const unsigned char chg = cell.chg;
 
@@ -150,21 +138,44 @@ void updateNb( Cell& cell, CellMap cells )
    else if (chg == -1) // death?
    {
       // assert neighbour references are set
-      --cell.nb[0].nbc; // decrement neighbour count
-      --cell.nb[1].nbc; 
-      --cell.nb[2].nbc; 
-      --cell.nb[3].nbc; 
-      --cell.nb[4].nbc; 
-      --cell.nb[5].nbc; 
-      --cell.nb[6].nbc; 
-      --cell.nb[7].nbc; 
+      --cell.nb[0]->nbc; // decrement neighbour count
+      --cell.nb[1]->nbc; 
+      --cell.nb[2]->nbc; 
+      --cell.nb[3]->nbc; 
+      --cell.nb[4]->nbc; 
+      --cell.nb[5]->nbc; 
+      --cell.nb[6]->nbc; 
+      --cell.nb[7]->nbc; 
    }
 }
 
+// proceed to next tick 
+void nextTick( CellSet& cells, const uint16_t vdlen )
+{
+   // update new occupied flag for all cells in list
+   for (CellSet::iterator itr = cells.begin(), end = cells.end(); itr != end;)
+   {
+      updateCell( *itr );  
+      if (itr->vdlen > vdlen) // void length exceeded?
+      {
+         // remove cell from set
+         untangle( *itr ); // untangle all references to me
+         itr = cells.erase_and_dispose( itr, Disposer()); 
+      }
+      else 
+         ++itr->vdlen;
+   }
+
+   // update neighbourhood for all cells
+   // may insert new cells and delete void cells 
+   for (CellSet::iterator itr = cells.begin(); itr != cells.end(); ++itr)
+      updateNb( *itr, cells );  
+}
+ 
 // add cell to list (may be empty)
 void add( CellSet& cells, int x, int y )
 {
-   Cell* const cell = new Cell( x, y ); // create new cell
+   Cell* const cell = new Cell( convertCoord( x, y )); // create new cell
    cell->occ = 1; // occupied
    cell->chg = 1; // just born
 
@@ -172,14 +183,3 @@ void add( CellSet& cells, int x, int y )
 
    updateNb( *cell, cells ); // update neighbours
 } 
-
-// delete all cells in list
-void deallocate( Cell* cell )
-{
-   for (;cell;)
-   {
-      Cell* next = cell->next; 
-      delete cell;
-      cell = next;
-   } 
-}
