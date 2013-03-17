@@ -55,12 +55,16 @@ void testCoord()
 template< int I >
 void dumpNb( Cell const& c )
 {
-   cout << I << " -> ";
    Cell const* const nb = c.nb[I];
-   if (nb)
-      cout << "(" << getX( nb->coord ) << ", " << getY( nb->coord ) << ")\n";
-   else 
-      cout << "[]\n";
+   if (!nb)
+      return;
+
+   if (nb->occ) 
+      cout << I;
+   else
+      cout << "[" << I << "]";
+      
+   cout << ", ";
 }
 
 ostream& operator<<( ostream& s, Cell const& c )
@@ -68,9 +72,9 @@ ostream& operator<<( ostream& s, Cell const& c )
    s
       << "coord = (" << getX( c.coord ) << ", " << getY( c.coord ) << ")\n"
       << "occ   = " << int( c.occ ) << '\n'
-      << "nbc   = " << c.nbc << '\n'
-      << "vdlen = " << c.vdlen << '\n';
-
+      << "nbc   = " << int( c.nbc ) << '\n'
+      << "vdlen = " << c.vdlen << '\n'
+      << "nb    = ";
    dumpNb< 0 >( c );
    dumpNb< 1 >( c );
    dumpNb< 2 >( c );
@@ -79,6 +83,7 @@ ostream& operator<<( ostream& s, Cell const& c )
    dumpNb< 5 >( c );
    dumpNb< 6 >( c );
    dumpNb< 7 >( c );
+   cout << "\n\n";
 
    return s;
 }
@@ -95,8 +100,13 @@ ostream& operator<<( ostream& s, CellSet const& cells )
 void testCellAdd()
 {
    CellSet cells;
-   add( cells, -1, 1 );
+
+   // construct glider
+   add( cells, 0, 0 );
+   add( cells, 1, 0 );
    add( cells, 0, 1 );
+   add( cells, -1, 0 );
+   add( cells, 1, -1 );
 
    cout << cells << endl;
 }

@@ -51,6 +51,7 @@ Cell::Cell( const Coord c )
    occ( 0 ), // empty 
    nbc( 0 ), // no neighbours
    chg( 0 ), // no change
+   vdlen( 0 ), // void length 0
    coord( c )
 {
    nb[0] = nb[1] = nb[2] = nb[3] = nb[4] = nb[5] = nb[6] = nb[7] = 0;
@@ -189,11 +190,11 @@ void nextTick( CellSet& cells, const uint16_t vdlen )
 // add cell to list (may be empty)
 void add( CellSet& cells, int x, int y )
 {
-   Cell* const cell = pool.construct( toCoord( x, y )); // create new cell
+   Cell* const cell = getCell( toCoord( x, y ), cells ); // get or insert new cell
+   // when cell is new it has nbc=0, otherwise nbc is set by induction
+
    cell->occ = 1; // occupied
    cell->chg = 1; // just born
-
-   cells.insert( cells.begin(), *cell );
 
    updateNb( *cell, cells ); // update neighbours
 } 
