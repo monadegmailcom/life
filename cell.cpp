@@ -5,6 +5,8 @@
 
 boost::object_pool< Cell > pool;
 
+using std::size_t;
+
 // offset for coordinates to avoid negative values
 const uint32_t offset = 0x0fffffff; 
 
@@ -57,31 +59,9 @@ Cell::Cell( const Coord c )
    nb[0] = nb[1] = nb[2] = nb[3] = nb[4] = nb[5] = nb[6] = nb[7] = 0;
 }
 
-// helper function for untangle
-template< char I >
-void untangleHelp( Cell& cell )
-{
-   Cell* const c = cell.nb[I];
-   c->nb[7-I] = 0; // unset reference
-}
-
-// untangle cell from neighbours, set all neighbour pointer to 0
-void untangle( Cell& cell )
-{
-   untangleHelp< 0 >( cell ); 
-   untangleHelp< 1 >( cell ); 
-   untangleHelp< 2 >( cell ); 
-   untangleHelp< 3 >( cell ); 
-   untangleHelp< 4 >( cell ); 
-   untangleHelp< 5 >( cell ); 
-   untangleHelp< 6 >( cell ); 
-   untangleHelp< 7 >( cell ); 
-}
-
 // conways life and death rule 
 void updateCell( Cell& cell )
 {
-   cell.chg = 0;
    if (cell.occ) // cell occupied?
    {
       if (cell.nbc < 2 || cell.nbc > 3) // death?
@@ -90,19 +70,10 @@ void updateCell( Cell& cell )
          cell.chg = -1;
       }
    }
-   else // else cell is empty
+   else if (cell.nbc == 3) // birth?
    {
-      if (cell.nbc == 0) // void?
-         ++cell.vdlen; // increment void length
-      else // not void
-      {
-         cell.vdlen = 0;
-         if (cell.nbc == 3) // birth?
-         {
-            cell.occ = 1;
-            cell.chg = 1;
-         }
-      }         
+      cell.occ = 1;
+      cell.chg = 1;
    }
 }
 
@@ -135,7 +106,7 @@ void updateNbHelp( Cell& cell, CellSet& cells )
  * set new neigbour references for birth cells */
 void updateNb( Cell& cell, CellSet& cells )
 {
-   const unsigned char chg = cell.chg;
+   const char chg = cell.chg;
 
    // update neighbours
   
@@ -149,7 +120,7 @@ void updateNb( Cell& cell, CellSet& cells )
       updateNbHelp< -1, 1, 5 >( cell, cells );
       updateNbHelp< 0, 1, 6 >( cell, cells );
       updateNbHelp< 1, 1, 7 >( cell, cells );
-  }
+   }
    else if (chg == -1) // death?
    {
       // assert neighbour references are set
@@ -162,29 +133,66 @@ void updateNb( Cell& cell, CellSet& cells )
       --cell.nb[6]->nbc; 
       --cell.nb[7]->nbc; 
    }
+
+   cell.chg = 0;
+}
+
+// helper function for untangle
+template< char I >
+void untangleHelp( Cell& cell )
+{
+   Cell* const nb = cell.nb[I];
+   if (nb)
+      nb->nb[7-I] = 0; // unset reference
+}
+
+// untangle cell from neighbours, set all neighbour pointer to 0
+void untangle( Cell& cell )
+{
+   untangleHelp< 0 >( cell ); 
+   untangleHelp< 1 >( cell ); 
+   untangleHelp< 2 >( cell ); 
+   untangleHelp< 3 >( cell ); 
+   untangleHelp< 4 >( cell ); 
+   untangleHelp< 5 >( cell ); 
+   untangleHelp< 6 >( cell ); 
+   untangleHelp< 7 >( cell ); 
 }
 
 // proceed to next tick 
 void nextTick( CellSet& cells, const uint16_t vdlen )
 {
    // update new occupied flag for all cells in list
-   for (CellSet::iterator itr = cells.begin(), end = cells.end(); itr != end;)
-   {
-      updateCell( *itr );  
-      if (itr->vdlen > vdlen) // void length exceeded?
-      {
-         // remove cell from set
-         untangle( *itr ); // untangle all references to me
-         itr = cells.erase_and_dispose( itr, Disposer()); 
-      }
-      else 
-         ++itr;
-   }
+   for (CellSet::iterator itr = cells.begin(), end = cells.end(); itr != end; ++itr)
+      updateCell( *itr );
 
    // update neighbourhood for all cells
    // may insert new cells and delete void cells 
    for (CellSet::iterator itr = cells.begin(); itr != cells.end(); ++itr)
       updateNb( *itr, cells );  
+
+   // trim cell set 
+   for (CellSet::iterator itr = cells.begin(); itr != cells.end();)
+   {
+      Cell& cell = *itr;
+      if (cell.occ | cell.nbc) // not void?
+      {
+         cell.vdlen = 0;
+         ++itr;
+      }
+      else // void
+      {
+         ++cell.vdlen;
+         if (cell.vdlen > vdlen) // void length exceeded?
+         {
+            // remove cell from set
+            untangle( cell ); // untangle all references to me
+            itr = cells.erase_and_dispose( itr, Disposer()); 
+         }
+         else
+            ++itr;
+      }
+   }
 }
  
 // add cell to list (may be empty)
@@ -198,3 +206,12 @@ void add( CellSet& cells, int x, int y )
 
    updateNb( *cell, cells ); // update neighbours
 } 
+
+size_t count( CellSet const& cells )
+{
+   size_t c = 0;
+   for (CellSet::const_iterator itr = cells.begin(); itr != cells.end(); ++itr)
+      c += itr->occ;
+
+   return c;
+}

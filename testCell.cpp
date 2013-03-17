@@ -92,10 +92,10 @@ ostream& operator<<( ostream& s, CellSet const& cells )
         itr != end; ++itr)
       s << *itr << endl;
 
-   return s;
+   return s; 
 }
 
-void testCellAdd()
+void testGlider()
 {
    CellSet cells;
 
@@ -104,17 +104,25 @@ void testCellAdd()
    add( cells, 0, -1 );
    add( cells, 0, 1 );
    add( cells, 1, 0 );
-   add( cells, 1, 1 );
+   add( cells, 1, 1 ); 
 
-   cout << cells << endl;
-   nextTick( cells, 1 );
-   cout << cells << endl;
+   unsigned i = 10;
+   for (; i; --i)
+   {
+//      cout << cells << endl;
+//      cout << count( cells ) << '/' << cells.size() << '\n';
+      nextTick( cells, 1 );
+      if (count( cells ) != 5)
+         break;
+   }
+
+   cout << (i ? "FAIL" : "OK" ) << endl;
 }
 
 int main()
 {
    testCoord();
-   testCellAdd();
+   testGlider();
 
    return 0;
 }

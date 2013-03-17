@@ -55,7 +55,7 @@ struct Cell
    // algorithm removes cells with large vdlen
    uint16_t vdlen;  
 
-   char occ; // occupied 
+   uint8_t occ; // occupied 
    uint8_t nbc; // occupied neighbour count
    
    /* 8 neigbour cells of a 2 dim cartesian grid
@@ -85,6 +85,32 @@ typedef boost::intrusive::set< Cell, CellMemberOption > CellSet;
 void add( CellSet& cells, int x, int y );
 // proceed to next tick 
 void nextTick( CellSet& cells, uint16_t vdlen );
+
+// count cells
+std::size_t count( CellSet const& cells );
+
+struct Component
+{
+   CellSet cells;
+
+   uint32_t minX;
+   uint32_t minY;
+   uint32_t maxX;
+   uint32_t maxY;
+
+   // member hook for intrusive set 
+   boost::intrusive::set_member_hook<> hook;
+};
+
+bool operator<( Component const&, Component const& );
+
+// typedef for intrusive set
+typedef boost::intrusive::member_hook< 
+   Component, boost::intrusive::set_member_hook<>, &Component::hook > ComponentMemberOption;
+typedef boost::intrusive::set< Component, ComponentMemberOption > ComponentSet;
+
+void divide( CellSet& cells, ComponentSet& components );
+void join( ComponentSet& components );
 
 #endif
 
