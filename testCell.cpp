@@ -70,11 +70,9 @@ void dumpNb( Cell const& c )
 ostream& operator<<( ostream& s, Cell const& c )
 {
    s
-      << "coord = (" << getX( c.coord ) << ", " << getY( c.coord ) << ")\n"
-      << "occ   = " << int( c.occ ) << '\n'
-      << "nbc   = " << int( c.nbc ) << '\n'
-      << "vdlen = " << c.vdlen << '\n'
-      << "nb    = ";
+      << "coord x/y     = " << getX( c.coord ) << '/' << getY( c.coord ) << '\n'
+      << "occ/nbc/vdlen = " << int( c.occ ) << '/' << int( c.nbc ) << '/' << c.vdlen << '\n'
+      << "nb            = ";
    dumpNb< 0 >( c );
    dumpNb< 1 >( c );
    dumpNb< 2 >( c );
@@ -83,7 +81,7 @@ ostream& operator<<( ostream& s, Cell const& c )
    dumpNb< 5 >( c );
    dumpNb< 6 >( c );
    dumpNb< 7 >( c );
-   cout << "\n\n";
+   cout << "\n";
 
    return s;
 }
@@ -102,12 +100,14 @@ void testCellAdd()
    CellSet cells;
 
    // construct glider
-   add( cells, 0, 0 );
-   add( cells, 1, 0 );
+   add( cells, -1, 1 );
+   add( cells, 0, -1 );
    add( cells, 0, 1 );
-   add( cells, -1, 0 );
-   add( cells, 1, -1 );
+   add( cells, 1, 0 );
+   add( cells, 1, 1 );
 
+   cout << cells << endl;
+   nextTick( cells, 1 );
    cout << cells << endl;
 }
 

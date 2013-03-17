@@ -83,6 +83,8 @@ typedef boost::intrusive::member_hook<
 typedef boost::intrusive::set< Cell, CellMemberOption > CellSet;
 
 void add( CellSet& cells, int x, int y );
+// proceed to next tick 
+void nextTick( CellSet& cells, uint16_t vdlen );
 
 #endif
 

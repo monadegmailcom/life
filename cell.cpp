@@ -178,7 +178,7 @@ void nextTick( CellSet& cells, const uint16_t vdlen )
          itr = cells.erase_and_dispose( itr, Disposer()); 
       }
       else 
-         ++itr->vdlen;
+         ++itr;
    }
 
    // update neighbourhood for all cells
