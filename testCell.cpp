@@ -8,8 +8,8 @@ void testCoord()
 {
    // test assignment and coord read
    {
-      int32_t inX = -1;
-      int32_t inY = 1;
+      uint32_t inX = 0;
+      uint32_t inY = 1;
       Coord c = toCoord( inX, inY );
 
       int32_t outX = getX( c );
@@ -22,22 +22,22 @@ void testCoord()
    // test ordering
    {
       {
-         Coord c1 = toCoord( -1, 1 );
-         Coord c2 = toCoord( 0, 0 );
+         Coord c1 = toCoord( 0, 2 );
+         Coord c2 = toCoord( 1, 1 );
 
          cout << c1.c << " < " << c2.c << ' ' << (c1.c < c2.c ? "OK" : "FAIL") << endl;
       }
 
       {
-         Coord c1 = toCoord( -1, 1 );
-         Coord c2 = toCoord( -1, 7 );
+         Coord c1 = toCoord( 0, 2 );
+         Coord c2 = toCoord( 0, 8 );
 
          cout << c1.c << " < " << c2.c << ' ' << (c1.c < c2.c ? "OK" : "FAIL") << endl;
       }
 
       {
-         Coord c1 = toCoord( -1, 7 );
-         Coord c2 = toCoord( -1, 1 );
+         Coord c1 = toCoord( 0, 8 );
+         Coord c2 = toCoord( 0, 2 );
 
          cout << c1.c << " > " << c2.c << ' ' << (c1.c > c2.c ? "OK" : "FAIL") << endl;
       }
@@ -70,9 +70,9 @@ void dumpNb( Cell const& c )
 ostream& operator<<( ostream& s, Cell const& c )
 {
    s
-      << "coord x/y     = " << getX( c.coord ) << '/' << getY( c.coord ) << '\n'
-      << "occ/nbc/vdlen = " << int( c.occ ) << '/' << int( c.nbc ) << '/' << c.vdlen << '\n'
-      << "nb            = ";
+      << "coord x/y = " << getX( c.coord ) << '/' << getY( c.coord ) << '\n'
+      << "occ/nbc   = " << int( c.occ ) << '/' << int( c.nbc ) << '\n'
+      << "nb        = ";
    dumpNb< 0 >( c );
    dumpNb< 1 >( c );
    dumpNb< 2 >( c );
@@ -111,7 +111,7 @@ void testGlider()
    {
 //      cout << cells << endl;
 //      cout << count( cells ) << '/' << cells.size() << '\n';
-      nextTick( cells, 1 );
+      nextTick( cells );
       if (count( cells ) != 5)
          break;
    }
@@ -119,10 +119,104 @@ void testGlider()
    cout << (i ? "FAIL" : "OK" ) << endl;
 }
 
+void testBitmask()
+{
+   {
+      const uint8_t k = 0;
+      const uint32_t bm = calcBitmask( k ); 
+      cout 
+         << int( k ) << " -> " << std::hex << bm << " " 
+         << (bm == 0 ? "OK" : "FAIL") << endl;
+   }
+
+   {
+      const uint8_t k = 1;
+      const uint32_t bm = calcBitmask( k ); 
+      cout 
+         << int( k ) << " -> " << std::hex << bm << " " 
+         << (bm == 0x00000001 ? "OK" : "FAIL") << endl;
+   }
+
+   {
+      const uint8_t k = 2;
+      const uint32_t bm = calcBitmask( k ); 
+      cout 
+         << int( k ) << " -> " << std::hex << bm << " " 
+         << (bm == 0x00000003 ? "OK" : "FAIL") << endl;
+   }
+
+   {
+      const uint8_t k = 32;
+      const uint32_t bm = calcBitmask( k ); 
+      cout 
+         << std::dec << int( k ) << " -> " << std::hex << bm << " " 
+         << (bm == 0xffffffff ? "OK" : "FAIL") << endl;
+   }
+}
+
+void testInterval()
+{
+   {
+      uint32_t a = 1;
+      uint32_t b = 2;
+      uint32_t x = 0;
+      cout 
+         << x << " not in [" << a << "," << b << "] ? " 
+         << (!inInterval( x, a, b ) ? "OK" : "FAIL") << endl;
+   }
+
+   {
+      uint32_t a = 1;
+      uint32_t b = 2;
+      uint32_t x = 1;
+      cout 
+         << x << " in [" << a << "," << b << "] ? " 
+         << (inInterval( x, a, b ) ? "OK" : "FAIL") << endl;
+   }
+
+   {
+      uint32_t a = 1;
+      uint32_t b = 2;
+      uint32_t x = 3;
+      cout 
+         << x << " not in [" << a << "," << b << "] ? " 
+         << (!inInterval( x, a, b ) ? "OK" : "FAIL") << endl;
+   }
+
+   {
+      uint32_t a = 3;
+      uint32_t b = 1;
+      uint32_t x = 0;
+      cout 
+         << x << " in [" << a << "," << b << "] ? " 
+         << (inInterval( x, a, b ) ? "OK" : "FAIL") << endl;
+   }
+
+   {
+      uint32_t a = 3;
+      uint32_t b = 1;
+      uint32_t x = 2;
+      cout 
+         << x << " not in [" << a << "," << b << "] ? " 
+         << (!inInterval( x, a, b ) ? "OK" : "FAIL") << endl;
+   }
+
+   {
+      uint32_t a = 3;
+      uint32_t b = 1;
+      uint32_t x = 4;
+      cout 
+         << x << " in [" << a << "," << b << "] ? " 
+         << (inInterval( x, a, b ) ? "OK" : "FAIL") << endl;
+   }
+}
+
 int main()
 {
+   testBitmask();
+   testInterval();
    testCoord();
-   testGlider();
+   //testGlider();
 
    return 0;
 }

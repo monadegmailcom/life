@@ -1,217 +1,308 @@
 #include "cell.h"
 
+// use intrusive container for customized memory management
+#include <boost/intrusive/list.hpp>
+
 // use local memory management to avoid heap allocations
 #include <boost/pool/object_pool.hpp>
 
-boost::object_pool< Cell > pool;
+#include <boost/scoped_array.hpp>
+using boost::scoped_array;
+
+#include <vector>
+using std::vector;
 
 using std::size_t;
+using std::pair;
 
-// offset for coordinates to avoid negative values
-const uint32_t offset = 0x0fffffff; 
+namespace {
 
-Coord toCoord( const int32_t x, const int32_t y )
+// x is in interval [a,b], x,a,b in Z(X)
+bool inInterval( const uint32_t x, const uint32_t a, const uint32_t b )
+{
+   if (a < b)
+      return (a <= x && x <= b);
+   else
+      return (a <= x || x <= b);
+}
+
+// order pairs (x,y) in lexical order address them as uint64_t
+union Coord
+{
+   struct Pair
+   {
+      uint32_t y; // declare y before x because of little endian
+      uint32_t x;
+   } p;
+   uint64_t c;
+};
+
+Coord toCoord( const uint32_t x, const uint32_t y )
 {
    Coord c;
-   c.p.x = x+offset;
-   c.p.y = y+offset;
+   c.p.x = x;
+   c.p.y = y;
    return c;
 }
 
-int32_t getX( Coord c )
+uint32_t getX( Coord c )
 {
-   return c.p.x-offset;
+   return c.p.x;
 }
 
-int32_t getY( Coord c )
+uint32_t getY( Coord c )
 {
-   return c.p.y-offset;
+   return c.p.y;
 }
 
-// lexical coordinate order functor
-// instrusive set is order by this functor
-struct KeyCmp
+/*
+an octet is a collection of 8 cells surrounded by 16
+neighbour cells
+
+******
+*0123*
+*4567*
+******
+
+012345
+6****7
+8****9
+abcdef
+
+*/
+
+struct Rect
 {
-   bool operator()( Cell const& cell, uint64_t const& c ) const
-   { return cell.coord.c < c; }
+   Coord leftUpper;
+   uint32_t width;
+   uint32_t height;
+
+   static bool intersect( Rect const& lhs, Rect const& rhs );
+   static void join( Rect& lhs, Rect const& rhs );
 };
 
-// order operator
-bool operator<( Cell const& lhs, Cell const& rhs )
+template< typename R >
+struct AreaBase : public boost::intrusive::list_base_hook<>    
 {
-   return lhs.coord.c < rhs.coord.c;
-}
+   R rect;
 
-// dispose functor for intrusive set
-struct Disposer
-{
-   void operator()( Cell* cell ) { pool.destroy( cell ); }
+   // typedef for intrusive list
+   typedef boost::intrusive::list< AreaBase > List;
 };
 
-Cell::Cell( const Coord c )
-: 
-   occ( 0 ), // empty 
-   nbc( 0 ), // no neighbours
-   chg( 0 ), // no change
-   vdlen( 0 ), // void length 0
-   coord( c )
+/* join a collection of overlapping rectangles. The resulting "list"
+   consists of disjunct rectangles which covers the original list.
+   L: type of rectangle list
+   require: 
+   L::iterator, L::begin(), L::end(), L::erase(), L::iterator::operator++()
+   R = L::value_type, join( R, R ), intersect( R, R )
+*/
+template< typename L >
+void joinRectangles( L& list )
 {
-   nb[0] = nb[1] = nb[2] = nb[3] = nb[4] = nb[5] = nb[6] = nb[7] = 0;
-}
-
-// conways life and death rule 
-void updateCell( Cell& cell )
-{
-   if (cell.occ) // cell occupied?
+   for (L::iterator next = list.begin(), itr = next++; itr != list.end(); 
+        ++itr, ++next)
    {
-      if (cell.nbc < 2 || cell.nbc > 3) // death?
+      for (L::iterator itr2 = next; itr2 != list.end();)
       {
-         cell.occ = 0;
-         cell.chg = -1;
-      }
-   }
-   else if (cell.nbc == 3) // birth?
-   {
-      cell.occ = 1;
-      cell.chg = 1;
-   }
-}
-
-Cell* getCell( const Coord c, CellSet& cells )
-{
-   CellSet::iterator itr = cells.lower_bound( c.c, KeyCmp());
-   if (itr == cells.end() || itr->coord.c != c.c) // no cell found?
-      // insert new empty cell 
-      itr = cells.insert( itr, *(pool.construct( c )));
-   return &*itr; 
-}
-
-template< char X, char Y, char I >
-void updateNbHelp( Cell& cell, CellSet& cells )
-{
-   Cell* c = cell.nb[I];
-   if (!c)
-   {
-      Coord coord = cell.coord;
-      coord.p.x += X;
-      coord.p.y += Y;
-      c = getCell( coord, cells );
-      c->nb[7-I] = &cell;
-      cell.nb[I] = c;
-   }
-   ++c->nbc;
-}
- 
-/* update neighbour count of all 8 neighbours 
- * set new neigbour references for birth cells */
-void updateNb( Cell& cell, CellSet& cells )
-{
-   const char chg = cell.chg;
-
-   // update neighbours
-  
-   if (chg == 1) // birth?
-   {
-      updateNbHelp< -1, -1, 0 >( cell, cells );
-      updateNbHelp< 0, -1, 1 >( cell, cells );
-      updateNbHelp< 1, -1, 2 >( cell, cells );
-      updateNbHelp< -1, 0, 3 >( cell, cells );
-      updateNbHelp< 1, 0, 4 >( cell, cells );
-      updateNbHelp< -1, 1, 5 >( cell, cells );
-      updateNbHelp< 0, 1, 6 >( cell, cells );
-      updateNbHelp< 1, 1, 7 >( cell, cells );
-   }
-   else if (chg == -1) // death?
-   {
-      // assert neighbour references are set
-      --cell.nb[0]->nbc; // decrement neighbour count
-      --cell.nb[1]->nbc; 
-      --cell.nb[2]->nbc; 
-      --cell.nb[3]->nbc; 
-      --cell.nb[4]->nbc; 
-      --cell.nb[5]->nbc; 
-      --cell.nb[6]->nbc; 
-      --cell.nb[7]->nbc; 
-   }
-
-   cell.chg = 0;
-}
-
-// helper function for untangle
-template< char I >
-void untangleHelp( Cell& cell )
-{
-   Cell* const nb = cell.nb[I];
-   if (nb)
-      nb->nb[7-I] = 0; // unset reference
-}
-
-// untangle cell from neighbours, set all neighbour pointer to 0
-void untangle( Cell& cell )
-{
-   untangleHelp< 0 >( cell ); 
-   untangleHelp< 1 >( cell ); 
-   untangleHelp< 2 >( cell ); 
-   untangleHelp< 3 >( cell ); 
-   untangleHelp< 4 >( cell ); 
-   untangleHelp< 5 >( cell ); 
-   untangleHelp< 6 >( cell ); 
-   untangleHelp< 7 >( cell ); 
-}
-
-// proceed to next tick 
-void nextTick( CellSet& cells, const uint16_t vdlen )
-{
-   // update new occupied flag for all cells in list
-   for (CellSet::iterator itr = cells.begin(), end = cells.end(); itr != end; ++itr)
-      updateCell( *itr );
-
-   // update neighbourhood for all cells
-   // may insert new cells and delete void cells 
-   for (CellSet::iterator itr = cells.begin(); itr != cells.end(); ++itr)
-      updateNb( *itr, cells );  
-
-   // trim cell set 
-   for (CellSet::iterator itr = cells.begin(); itr != cells.end();)
-   {
-      Cell& cell = *itr;
-      if (cell.occ | cell.nbc) // not void?
-      {
-         cell.vdlen = 0;
-         ++itr;
-      }
-      else // void
-      {
-         ++cell.vdlen;
-         if (cell.vdlen > vdlen) // void length exceeded?
+         if (intersect( *itr, *itr2 ))
          {
-            // remove cell from set
-            untangle( cell ); // untangle all references to me
-            itr = cells.erase_and_dispose( itr, Disposer()); 
+            join( *itr, *itr2 );
+            list.erase( itr2 );
+            itr2 = next;
          }
          else
-            ++itr;
+            ++itr2;
       }
    }
 }
- 
-// add cell to list (may be empty)
-void add( CellSet& cells, int x, int y )
+
+typedef AreaBase< Rect > Area;
+
+void join( Area& lhs, Area const& rhs )
 {
-   Cell* const cell = getCell( toCoord( x, y ), cells ); // get or insert new cell
-   // when cell is new it has nbc=0, otherwise nbc is set by induction
-
-   cell->occ = 1; // occupied
-   cell->chg = 1; // just born
-
-   updateNb( *cell, cells ); // update neighbours
-} 
-
-size_t count( CellSet const& cells )
-{
-   size_t c = 0;
-   for (CellSet::const_iterator itr = cells.begin(); itr != cells.end(); ++itr)
-      c += itr->occ;
-
-   return c;
+   Rect::join( lhs.rect, rhs.rect );
 }
+
+bool intersect( Area const& lhs, Area const& rhs )
+{
+   return Rect::intersect( lhs.rect, rhs.rect );
+}
+
+void syntaxCheck()
+{
+   Area::List list;
+   joinRectangles( list );
+}
+
+/*
+   C: content
+   require:
+   C::State& C::state( C::Coord )
+   C::State C::newState( C::Coord ) const
+   bool operator!=( C::State, C::State )
+   void C::neighbours( C::Coord, C::State, vector< C::Coord >& ) const
+   uint8_t& C::visited( C::Coord )
+   bool C::border( C::Coord ) const
+*/
+
+template< typename C >
+bool nextTick( 
+   vector< typename C::Coord >& candidates, 
+   vector< typename C::Coord >& tmp1, 
+   vector< typename C::Coord >& tmp2, 
+   vector< typename C::State >& newStates,
+   C& content )
+{
+   bool border = false;
+
+   // calc new states of candidates
+   newStates.clear();
+   for (vector< C::Coord >::iterator itr = candidates.begin(), 
+        end = candidates.end(); itr != end; ++itr)
+      newStates.push_back( content.newState( *itr ));
+
+   tmp2.clear();
+   for (size_t idx = candidates.size; idx; --idx)
+   {
+      C::Coord& c = candidates[idx];
+      C::State& newState = newStates[idx];
+      content.state( c ) = newState;
+
+      content.neighbours( c, newState, tmp1 );
+      for (vector< C::Coord >::iterator nbItr = tmp1.begin(), 
+           nbEnd = tmp1.end(); nbItr != nbEnd; ++nbItr)
+      {
+         uint8_t& visited = content.visited( *nbItr );
+         if (!visited)
+         {
+            visited = 1;
+            border |= content.border( *nbItr );
+            tmp2.push_back( *nbItr );
+         }
+      }
+   }
+
+   for (vector< C::Coord >::iterator itr = tmp2.begin(), 
+        end = tmp2.end(); itr != end; ++itr)
+      content.visited( *itr ) = 0;
+
+   swap( candidates, tmp2 );
+   return border;
+}
+
+struct Dim2
+{
+   typedef uint8_t State; // octed
+   typedef uint64_t Coord;
+
+   Dim2( uint32_t width, uint32_t height );
+   uint64_t maxCoord; // N = width*height
+
+   scoped_array< uint8_t > cells; // [N]
+   scoped_array< uint8_t > visited; // [N]
+   scoped_array< uint8_t > stateChangeTable; // [2^(8+16)] ~ 16Mb
+
+   struct TableEntry
+   {
+      uint8_t mask;
+      uint64_t offset;
+   };
+   TableEntry neighbourTable[2*2*2];
+
+   uint8_t& state( uint64_t );
+   uint8_t& visited( uint64_t );
+
+   uint8_t newState( uint64_t ) const;
+   void neighbours( Change< Dim2 > const&, vector< uint64_t >& ) const;
+   bool border( uint64_t ) const;
+};
+
+Dim2::Dim2( uint32_t width, uint32_t height )
+: N( width*height), cells( new uint8_t[N] ), visited( new uint8_t[N] )
+{
+   // calculate state change table
+
+   // fill neighbour table
+}
+
+uint8_t& Dim2::state( const uint64_t c )
+{
+   return cells[c];
+}
+
+uint8_t& Dim2::visited( const uint64_t c )
+{
+   return cells[c];
+}
+
+uint8_t Dim2::newState( const uint64_t c ) const
+{
+   // todo: calc index
+   uint32_t idx = 0;
+   return stateChangeTable[idx];
+}
+
+void Dim2::neighbours( 
+   Change< Dim2 > const& change, vector< uint64_t >& neighbours ) const
+{
+   const uint8_t diff = change.state^change.newState;
+   uint64_t& c = change.coord;
+
+   neighbours.clear();
+
+   const size_t tableSize = sizeof( neighbourTable )/sizeof( TableEntry );
+   for (size_t idx = tableSize; idx; --idx)
+   {
+      TableEntry const& e = neighbourTable[idx];
+      if (diff & e.mask)
+         neighbours.push_back( c+e.offset );
+   }
+}
+
+bool Dim2::border( const uint64_t c ) const
+{
+   // todo: implement
+   return false;
+}
+
+void syntaxCheck2()
+{
+   vector< uint64_t > candidates;
+   vector< Dim2::Coord > neighbours;
+   vector< Change< Dim2 > > changes;
+   Dim2 content( 17, 4 );
+   nextTick( candidates, neighbours, changes, content );
+}
+
+//boost::object_pool< Area > areaPool;
+
+struct Torus
+{
+   Torus( unsigned powX, unsigned powY ); // 2^powX/Y, 0 <= powX/Y <= 32
+
+   // modulo masks
+   uint32_t maskX; 
+   uint32_t maskY;
+
+   Area::List areas;
+};
+
+uint32_t calcBitmask( unsigned k ) // 0 <= k <= 32
+{
+   uint32_t result = 0;
+   for (;k;--k)
+   {
+      result <<= 1;
+      result |= 0x01;
+   }
+
+   return result;
+}
+
+Torus::Torus( unsigned powX, unsigned powY )
+: 
+   maskX( calcBitmask( powX )), maskY( calcBitmask( powY ))
+{}
+
+} //   namespace {

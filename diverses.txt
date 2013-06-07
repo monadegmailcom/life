@@ -1,0 +1,572 @@
+#include "cell.h"
+
+// use intrusive container for customized memory management
+#include <boost/intrusive/set.hpp>
+#include <boost/intrusive/list.hpp>
+
+// use local memory management to avoid heap allocations
+#include <boost/pool/object_pool.hpp>
+
+boost::object_pool< Cell > pool;
+boost::object_pool< Area > areaPool;
+
+using std::size_t;
+
+// x is in interval [a,b], x,a,b in Z(X)
+bool inInterval( const uint32_t x, const uint32_t a, const uint32_t b )
+{
+   if (a < b)
+      return (a <= x && x <= b);
+   else
+      return (a <= x || x <= b);
+}
+
+Coord toCoord( const uint32_t x, const uint32_t y )
+{
+   Coord c;
+   c.p.x = x;
+   c.p.y = y;
+   return c;
+}
+
+uint32_t getX( Coord c )
+{
+   return c.p.x;
+}
+
+uint32_t getY( Coord c )
+{
+   return c.p.y;
+}
+
+struct Area;
+
+struct Cell 
+{
+   // default initilize, empty and no neighbours
+   Cell( Coord c ); // coordinate of cell
+
+   /* each cell can be in the state occupied or empty 
+      state change occupied -> empty     : death
+                   occupied -> occupied  : no change
+                   empty     -> empty    : no change
+                   empty     -> occupied : birth */
+   char chg; // -1 death, 0 no change, 1 birth
+
+   uint8_t occ; // occupied 
+   uint8_t nbc; // occupied neighbour count
+   Area* area; // area membership 
+
+   /* 8 neigbour cells of a 2 dim torus grid
+      0 1 2
+      3   4
+      5 6 7
+      referenced cells always reference back with index formular:
+      i <-> 7-i 
+      an unset pointer indicates an empty neighbour
+      when pointer is set, the neighbour may be occupied or empty */
+   Cell* nb[8]; 
+
+   // member hook for intrusive set 
+   boost::intrusive::set_member_hook<> hook;
+
+   const Coord coord;
+};
+
+// lexical coordinate order 
+bool operator<( Cell const& lhs, Cell const& rhs );
+
+// typedef for intrusive set
+typedef boost::intrusive::member_hook< 
+   Cell, boost::intrusive::set_member_hook<>, &Cell::hook > CellMemberOption;
+typedef boost::intrusive::set< Cell, CellMemberOption > CellSet;
+
+// area of cells within rectangle, all areas are disjunct
+struct Area
+{
+   Area(); // initialize minCoord and maxCoord
+
+   // all cells within the area
+   CellSet cells;
+
+   Coord minCoord; // left upper
+   Coord maxCoord; // right lower
+
+   /* 4 neighbour areas of a 2 dim torus grid
+       0
+      1 2
+       3
+      referenced areas always reference back with index formular:
+      i <-> 3-i 
+      all pointers are set, may reference self
+      let d in 0,1,2,3 be a direction, then the correspoding rectangle side 
+      is the d-side. To extend an area in d-direction means to push the
+      d-side in d-direction. Another area A is d-intersectable when the
+      area will eventually intersect area A by extending the area in 
+      d-direction. An area is always d-intersectable to itself in a torus 
+      topology. A d-neighbour is a minimal d-intersectable area with respect 
+      to the extension in d-direction.
+   */
+   Area* nb[4];
+
+   // member hook for intrusive list
+   boost::intrusive::list_member_hook<> hook;
+};
+
+// test if lhs and rhs intersect
+bool intersect( Area& lhs, Area& rhs );
+
+// add cell to list 
+void add( Area& area, uint32_t x, uint32_t y );
+
+// proceed to next tick 
+void nextTick( CellSet& cells );
+
+// count cells
+std::size_t count( CellSet const& cells );
+
+struct World
+{
+   World( unsigned powX, unsigned powY ); // 2^powX/Y, 0 <= powX/Y <= 32
+
+   // modulo masks
+   uint32_t maskX; 
+   uint32_t maskY;
+
+   IntervalSet intervals;
+};
+
+void join( IntervalSet& );
+
+/*
+// divide cells in areas, so no two cells from different areas share a 
+// neighbour cell
+void divide( CellSet& cells, AreaSet& areas );
+
+// join areas, make use of birth flag
+void join( AreaSet& areas );
+*/
+
+// lexical coordinate order functor
+// instrusive set is order by this functor
+struct KeyCmp
+{
+   bool operator()( Cell const& cell, uint64_t const& c ) const
+   { return cell.coord.c < c; }
+};
+
+// order operator
+bool operator<( Cell const& lhs, Cell const& rhs )
+{
+   return lhs.coord.c < rhs.coord.c;
+}
+
+// dispose functor for intrusive set
+struct Disposer
+{
+   void operator()( Cell* cell ) { pool.destroy( cell ); }
+};
+
+Cell::Cell( const Coord c )
+: 
+   chg( 0 ), // no change
+   occ( 0 ), // empty 
+   nbc( 0 ), // no neighbours
+   area( 0 ), // no area member
+   coord( c )
+{
+   nb[0] = nb[1] = nb[2] = nb[3] = nb[4] = nb[5] = nb[6] = nb[7] = 0;
+}
+
+// conways life and death rule 
+void updateCell( Cell& cell )
+{
+   cell.chg = 0;
+   if (cell.occ) // cell occupied?
+   {
+      if (cell.nbc < 2 || cell.nbc > 3) // death?
+      {
+         cell.occ = 0;
+         cell.chg = -1;
+      }
+   }
+   else if (cell.nbc == 3) // birth?
+   {
+      cell.occ = 1;
+      cell.chg = 1;
+   }
+}
+
+Cell* getCell( const Coord c, Area& area )
+{
+   CellSet::iterator itr = area.cells.lower_bound( c.c, KeyCmp());
+   if (itr == area.cells.end() || itr->coord.c != c.c) // no cell found?
+      // insert new empty cell 
+      itr = area.cells.insert( itr, *(pool.construct( c )));
+   return &*itr; 
+}
+
+template< char X, char Y, char I >
+void updateNbHelp( Cell& cell, Area& area )
+{
+   Cell* c = cell.nb[I];
+   if (!c)
+   {
+      Coord coord = cell.coord;
+      coord.p.x += X;
+      coord.p.y += Y;
+      c = getCell( coord, area );
+      c->nb[7-I] = &cell;
+      cell.nb[I] = c;
+   }
+   ++c->nbc;
+}
+ 
+/* update neighbour count of all 8 neighbours 
+ * set new neigbour references for birth cells */
+void updateNb( Cell& cell, Area& area )
+{
+   const char chg = cell.chg;
+
+   // update neighbours
+  
+   if (chg == 1) // birth?
+   {
+      updateNbHelp< -1, -1, 0 >( cell, area );
+      updateNbHelp<  0, -1, 1 >( cell, area );
+      updateNbHelp<  1, -1, 2 >( cell, area );
+      updateNbHelp< -1,  0, 3 >( cell, area );
+      updateNbHelp<  1,  0, 4 >( cell, area );
+      updateNbHelp< -1,  1, 5 >( cell, area );
+      updateNbHelp<  0,  1, 6 >( cell, area );
+      updateNbHelp<  1,  1, 7 >( cell, area );
+   }
+   else if (chg == -1) // death?
+   {
+      // assert neighbour references are set
+      --cell.nb[0]->nbc; // decrement neighbour count
+      --cell.nb[1]->nbc; 
+      --cell.nb[2]->nbc; 
+      --cell.nb[3]->nbc; 
+      --cell.nb[4]->nbc; 
+      --cell.nb[5]->nbc; 
+      --cell.nb[6]->nbc; 
+      --cell.nb[7]->nbc; 
+   }
+}
+
+// proceed to next tick 
+void nextTick( Area& area )
+{
+   // update new occupied flag for all cells in list
+   for (CellSet::iterator itr = area.cells.begin(), end = area.cells.end(); itr != end; ++itr)
+      updateCell( *itr );
+
+   // update neighbourhood for all cells
+   // may insert new cells 
+   for (CellSet::iterator itr = area.cells.begin(); itr != area.cells.end(); ++itr)
+      updateNb( *itr, area );  
+}
+ 
+Area::Area()
+{
+   minCoord.c = -1; // maximal
+   maxCoord.c = 0; // minimal
+}
+
+
+void add( Area& area, const uint32_t x, const uint32_t y )
+{
+   Cell* const cell = getCell( toCoord( x, y ), area ); // get or insert new cell
+   // when cell is new it has nbc=0, otherwise nbc is set by induction
+
+   cell->occ = 1; // occupied
+   cell->chg = 1; // just born
+
+   updateNb( *cell, area ); // update neighbours
+} 
+
+size_t count( CellSet const& cells )
+{
+   size_t c = 0;
+   for (CellSet::const_iterator itr = cells.begin(); itr != cells.end(); ++itr)
+      c += itr->occ;
+
+   return c;
+}
+
+// helper function for untangle
+template< char I >
+void untangleHelp( Cell& cell )
+{
+   Cell* const nb = cell.nb[I];
+   if (nb)
+      nb->nb[7-I] = 0; // unset reference
+}
+
+// untangle cell from neighbours, set all neighbour pointer to 0
+void untangle( Cell& cell )
+{
+   untangleHelp< 0 >( cell ); 
+   untangleHelp< 1 >( cell ); 
+   untangleHelp< 2 >( cell ); 
+   untangleHelp< 3 >( cell ); 
+   untangleHelp< 4 >( cell ); 
+   untangleHelp< 5 >( cell ); 
+   untangleHelp< 6 >( cell ); 
+   untangleHelp< 7 >( cell ); 
+}
+
+// remove all void cells and reset color
+void trim( CellSet& cells )
+{
+   for (CellSet::iterator itr = cells.begin(); itr != cells.end();)
+   {
+      Cell& cell = *itr;
+      cell.area = 0;
+      if (cell.occ | cell.nbc) // not void?
+         ++itr;
+      else // void
+      {
+         // remove cell from set
+         untangle( cell ); // untangle all references to me
+         itr = cells.erase_and_dispose( itr, Disposer()); 
+      }
+   }
+}
+
+// forward decl
+void addToGroup( Cell& cell, Area& group );
+
+template< char I >
+void addToGroupHelp( Cell& cell, Area& area ) 
+{
+   Cell* nb = cell.nb[I];
+   if (nb && !nb->area)
+      addToGroup( *nb, area );
+}
+
+void addToGroup( Cell& cell, Area& area )
+{
+   cell.area = &area;
+
+   if (cell.coord.c < area.minCoord.c)
+      area.minCoord.c = cell.coord.c;
+   if (cell.coord.c > area.maxCoord.c)
+      area.maxCoord.c = cell.coord.c;
+
+   addToGroupHelp< 0 >( cell, area );
+   addToGroupHelp< 1 >( cell, area );
+   addToGroupHelp< 2 >( cell, area );
+   addToGroupHelp< 3 >( cell, area );
+   addToGroupHelp< 4 >( cell, area );
+   addToGroupHelp< 5 >( cell, area );
+   addToGroupHelp< 6 >( cell, area );
+   addToGroupHelp< 7 >( cell, area );
+}
+
+/*
+// devide cells in groups, all members of a group are connected with each other
+void divideHlp( CellSet& cells, AreaSet& areas )
+{
+   trim ( cells );
+   
+   while (!cells.empty())
+   {
+      Cell& cell = *cells.begin(); // first cell
+      Area& area = *areaPool.construct(); // construct new area
+      area.minCoord = cell.coord;
+      area.maxCoord = cell.coord;
+      areas.insert( areas.begin(), area );
+
+      addToGroup( cell, area );
+      
+      for (CellSet::iterator itr = cells.begin(); itr != cells.end();)
+      {
+         if (itr->area)
+         {
+            Cell& cell = *itr;
+            itr = cells.erase( itr );
+            cell.area->cells.push_back( cell );
+         }
+         else
+            break;
+      }
+   }
+}
+
+void divide( AreaSet& areas )
+{
+   AreaSet newAreas;
+   while (!areas.empty())
+   {
+      Area& area = *areas.erase( areas.begin());
+      divideHlp( area.cells, newAreas );
+      areaPool.destroy( &area );
+   }
+
+   areas.swap( newAreas );
+}
+
+void join( AreaSet& areas )
+{
+
+}
+*/
+
+uint32_t calcBitmask( unsigned k ) // 0 <= k <= 32
+{
+   uint32_t result = 0;
+   for (;k;--k)
+   {
+      result <<= 1;
+      result |= 0x01;
+   }
+
+   return result;
+}
+
+World::World( unsigned powX, unsigned powY )
+: 
+   maskX( calcBitmask( powX )), maskY( calcBitmask( powY ))
+{}
+
+/*
+4 intersect cases
+[a1,b1] ---
+[a2,b2]   ---
+
+[a1,b1] ---
+[a2,b2]  -
+
+[a1,b1]  -
+[a2,b2] ---
+
+[a1,b1]  ---
+[a2,b2] ---
+
+2 disjunct cases
+[a1,b1] ---
+[a2,b2]     ---
+
+[a1,b1]     ---
+[a2,b2] ---
+*/
+
+bool intersectIntervale( 
+   const uint32_t _a1, const uint32_t _b1,
+   const uint32_t _a2, const uint32_t _b2 )
+{
+   const uint64_t offset = 0xffffffff;
+
+   const uint64_t a1 = _a1;
+   const uint64_t b1 = _b1;
+   if (a1 > b1)
+      b1 += offset;
+  
+   const uint64_t a2 = _a2;
+   const uint64_t b2 = _b2;
+   if (a2 > b2)
+      b2 += offset;
+
+   return b1 >= a2 && a1 <= b2;
+}
+
+bool intersect( Area& lhs, Area& rhs )
+{
+   return 
+         intersectInterval( 
+            lhs.minCoord.p.x, lhs.maxCoord.p.x )
+            rhs.minCoord.p.x, rhs.maxCoord.p.x )
+      && intersectInterval( 
+            lhs.minCoord.p.y, lhs.maxCoord.p.y )
+            rhs.minCoord.p.y, rhs.maxCoord.p.y );
+}
+
+bool SortInterval::operator()( Interval const& lhs, Interval const& rhs )
+{
+   return lhs.b < rhs.a;
+}
+
+void join( IntervalSet& intervals )
+{
+   //for (IntervalSet::iterator itr = world.intervals.begin();
+}
+
+/* recursive division of the torus in cuboids
+   each section has:
+   - an inclusive start coordinate
+   - a pointer to the next section in the same dimension
+   - either content cells or a pointer to a sub division 
+       with fixed coordinate d orthogonal to current d
+
+s->sub != 0 => s->d != s->sub->d
+
+example: 
+
+ 5 -s11---s31-------------------------------------
+     2                    7
+     |          c31       |      c21
+    s21                  s22 
+     |                    | 
+     | 6 -s32-------------| 
+     |          c32       | 
+     | 8 -s33-------------|
+     |          c33       |
+ 10 -s12----------------------------------------
+  
+   c11
+
+Section* s11, s12, s22, s31, s32, s33;
+CellSet c11, c21, c31, c32, c33;
+     start next cells  sub d
+s11: 5     s12  empty  s21 1
+s12: 10    s11  c11       
+s21: 2     s22  empty  s31 0
+s22: 7     s21  c21       
+s31: 5     s32  c31       
+s32: 6     s33  c32       
+s33: 8     0    c33       
+*/
+
+template< typename T >
+struct Section
+{
+   uint64_t start;
+
+   Section* next; 
+   T content;
+   Section* sub;
+   char d; // d == 0 <=> sub == 0
+};
+
+// apply algorithm A recursivly
+template< typename T, typename A >
+void descend( 
+   Section< T >* sec, // section to apply algorithm to
+   pair< uint64_t, uint64_t >* cub ) // cuboid left closed/right open intervals
+{
+   const char d = sec->d; // current dimension index
+   if (!d) // plain content in section?
+      A()( content, cub ); // apply algorithm to content in cuboid
+   else
+   {
+      pair< uint64_t, uint64_t >& intv = cub[d-1]; // current variable interval
+      pair< uint64_t, uint64_t > org = intv; // make copy of original
+
+      /* iterate all next sections starting from "sec". Stop when no next 
+         section left or next section points to "sec" (cycle possible in 
+         torus). */
+      for (Section* cur = sec; cur && cur != sec; cur = cur->next)
+      {
+         // replace current interval of cuboid
+         intv.first = cur->start;
+         if (cur->next)
+            intv.second = cur->next->start;
+
+         descend< T, A >( cur, cub ); // recursion
+      }
+
+      intv = org; // replace original interval
+   }
+}

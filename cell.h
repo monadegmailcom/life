@@ -18,99 +18,42 @@ typedef __int32 int32_t;
 #endif
 // <- declare standard types
 
-// set of cells, ordered by coordinates (x, y) packed in uint64_t
-// use intrusive container for customized memory management
-#include <boost/intrusive/set.hpp>
+/*
+Conways game of life in a torus compactification of the plane, where 
+"up" is connnected to "down" and "left" to "right". Then the local 
+neighbourhood topology is aquivalent to a 3 dimensional torus. 
 
-// to order pairs (x,y) in lexical order address them as uint64_t
-union Coord
-{
-   struct Pair
-   {
-      uint32_t y; // declare y before x because of little endian
-      uint32_t x;
-   } p;
-   uint64_t c;
-};
+         up
+       _ _|_ _  X=4
+      |_|_|_|_|
+left _|_|_|_|_|_ right
+      |_|_|_|_|
+      |_|_|_|_|
+  Y=4     |     
+        down    
 
-// signed coordinates are added with offset to avoid negativ values
-Coord toCoord( int32_t x, int32_t y );
-int32_t getX( Coord c );
-int32_t getY( Coord c );
+Let X and Y be the number of grid cells in horizontal and vertical direction. 
+Each grid cell is address by coordinates (x,y), where x and y are members of 
+the additive modulo groups Z(X)={0,...,X-1} and Z(Y)={0,...,Y-1}. 
+When X=2^k and Y=2^n are powers of 2, modulo calculation is performed by 
+bitwise AND operation with bit masks 0...01....1 with corresponding number
+of 1's (0 <= k,n <= 32). 
+*/
 
-struct Cell 
-{
-   // default initilize, empty and no neighbours
-   Cell( Coord c ); // coordinate of cell
+/*
+An interval in Z(X) is a pair (a,b) of numbers from Z(X). a > b is possible.
+x in [a,b] means following:
 
-   /* each cell can be in the state occupied or empty 
-      state change occupied -> empty     : death
-                   occupied -> occupied  : no change
-                   empty     -> empty    : no change
-                   empty     -> occupied : birth */
-   char chg; // -1 death, 0 no change, 1 birth
+for a<=b:
+    a--b
+|out|in|out|
+0          X-1
 
-   // a cell is called void if its in state empty and has a neighbour count
-   // of 0. void length is the number of ticks a cell is continously void
-   // algorithm removes cells with large vdlen
-   uint16_t vdlen;  
-
-   uint8_t occ; // occupied 
-   uint8_t nbc; // occupied neighbour count
-   
-   /* 8 neigbour cells of a 2 dim cartesian grid
-      0 1 2
-      3   4
-      5 6 7
-      referenced cells always reference back with index formular:
-      i <-> 7-i 
-      an unset pointer indicates an empty neighbour
-      when pointer is set, the neighbour may be occupied or empty */
-   Cell* nb[8]; 
-
-   // member hook for intrusive set 
-   boost::intrusive::set_member_hook<> hook;
-
-   const Coord coord;
-};
-
-// lexical coordinate order 
-bool operator<( Cell const& lhs, Cell const& rhs );
-
-// typedef for intrusive set
-typedef boost::intrusive::member_hook< 
-   Cell, boost::intrusive::set_member_hook<>, &Cell::hook > CellMemberOption;
-typedef boost::intrusive::set< Cell, CellMemberOption > CellSet;
-
-void add( CellSet& cells, int x, int y );
-// proceed to next tick 
-void nextTick( CellSet& cells, uint16_t vdlen );
-
-// count cells
-std::size_t count( CellSet const& cells );
-
-struct Component
-{
-   CellSet cells;
-
-   uint32_t minX;
-   uint32_t minY;
-   uint32_t maxX;
-   uint32_t maxY;
-
-   // member hook for intrusive set 
-   boost::intrusive::set_member_hook<> hook;
-};
-
-bool operator<( Component const&, Component const& );
-
-// typedef for intrusive set
-typedef boost::intrusive::member_hook< 
-   Component, boost::intrusive::set_member_hook<>, &Component::hook > ComponentMemberOption;
-typedef boost::intrusive::set< Component, ComponentMemberOption > ComponentSet;
-
-void divide( CellSet& cells, ComponentSet& components );
-void join( ComponentSet& components );
+for b<=a:
+---b   a---
+|in|out|in|
+0         X-1
+*/
 
 #endif
 
